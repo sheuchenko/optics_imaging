@@ -3,6 +3,7 @@
 import numpy as np
 import cv2
 import sys
+import scipy
 import matplotlib.pyplot as plt
 
 def calc_rms(data):
@@ -210,6 +211,35 @@ if __name__ == '__main__':
     
     sys.exit(0)
     
+    
+    wf_cplx, apod, phase, mask_nan = build_wf_cplx_ideal(msize, NA_obj, wl_um, pix_img_um, mag)
+    
+    list_of_apod_index = np.argwhere(apod == 1)
+    N = len(list_of_apod_index)
+    
+    apod_pro = np.zeros((N, msize*msize))
+    for i in range(N):
+        tx = list_of_apod_index[i][1] - msize//2
+        ty = list_of_apod_index[i][0] - msize//2
+        apod_shift = np.roll(apod, tx, axis=1)
+        apod_shift = np.roll(apod_shift, ty, axis=0)
+        apod_shift = apod_shift.reshape(1,-1).T
+        apod_pro[i,:] = apod_shift[:,0]
+    
+    svd_U,svd_sigma,svd_VT = np.linalg.svd(apod_pro)
+
+    tcc_coefs = svd_sigma
+    tcc_array = np.zeros((N,msize,msize))
+    for i in range(N):
+        tmp = svd_VT[i,:].reshape(msize,msize)
+        tmp[np.less(np.abs(tmp), 1e-8)] = 0
+        tcc_array[i,:,:] = tmp
+        
+        plt.figure(1)
+        plt.imshow(tmp, cmap="rainbow")
+        plt.colorbar()
+        plt.savefig("C:\\code\\optics\\tcc\\" + "fig_tcc_" + str(i).zfill(2) + ".png")
+        plt.close()
     
     
     
