@@ -180,16 +180,16 @@ def imaging(data_in, NA_obj, wl_um, pix_img_um, mag, coef_cohere, zer_list = [0]
         list_of_source_index = np.argwhere(source*apod == 1)
         N = len(list_of_source_index)
         
-        apod_pro = np.zeros((N, msize*msize))
+        apod_pro = np.zeros((N, msize*msize), dtype = np.complex128)
         for i in range(N):
             tx = list_of_source_index[i][1] - msize//2
             ty = list_of_source_index[i][0] - msize//2
-            apod_shift = np.roll(apod, tx, axis=1)
+            apod_shift = np.roll(wf_cplx, tx, axis=1)
             apod_shift = np.roll(apod_shift, ty, axis=0)
             apod_shift_reshape = apod_shift.reshape(1,-1).T
             apod_pro[i,:] = apod_shift_reshape[:,0]
         
-        N_select = np.min([100,N-1])
+        N_select = np.min([100,N-2])
         # svd_U,svd_sigma,svd_VT = np.linalg.svd(apod_pro)
         svd_U,svd_sigma,svd_VT = svds(apod_pro, N_select)
         svd_sigma = svd_sigma[::-1]
@@ -207,7 +207,7 @@ def imaging(data_in, NA_obj, wl_um, pix_img_um, mag, coef_cohere, zer_list = [0]
         tcc_coefs = tcc_coefs_origin[:N_select_cut]
         print(f"TCC is cut: {N} -> {N_select} -> {N_select_cut}")
         
-        tcc_array = np.zeros((N_select_cut,msize,msize))
+        tcc_array = np.zeros((N_select_cut,msize,msize), dtype = np.complex128)
         data_out_partial = np.zeros_like(data_in)
         for i in range(N_select_cut):
             tmp = svd_VT[i,:].reshape(msize,msize)
@@ -215,8 +215,8 @@ def imaging(data_in, NA_obj, wl_um, pix_img_um, mag, coef_cohere, zer_list = [0]
             tcc_array[i,:,:] = tmp * norm_of_tcc_coefs
             
             amplitude = image_pad(np.sqrt(data_in), pad_scale)
-            tcc_pad = resize_cplx(tcc_array[i,:,:], (msize_pad,msize_pad))
-            out_amp = iFFT(FFT(amplitude) * tcc_pad)
+            tcc_resize = resize_cplx(tcc_array[i,:,:], (msize_pad,msize_pad))
+            out_amp = iFFT(FFT(amplitude) * tcc_resize)
             out_intens = np.real(out_amp * np.conj(out_amp))
             data_out_partial += (tcc_coefs[i] * image_unpad(out_intens, pad_scale))
         out = data_out_partial / N
@@ -228,7 +228,7 @@ if __name__ == '__main__':
     term_nums = 37
     zernike_list = list()
     zernike_list = [0] * term_nums
-    zernike_list[4] = 0.0
+    zernike_list[4] = 0.5
     
     NA_obj = 0.5
     wl_um = 0.5
@@ -247,7 +247,7 @@ if __name__ == '__main__':
     
     coef_cohere = 0.5
     
-    list_of_coef_cohere = [val/10 for val in range(0,11,2)]
+    list_of_coef_cohere = [val/10 for val in range(1,11,2)]
     list_of_data_out_partial = list()
     for coef_cohere in list_of_coef_cohere:      
         print(f"coef_cohere = {coef_cohere}")
