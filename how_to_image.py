@@ -5,6 +5,7 @@ import cv2
 import sys
 import scipy
 import matplotlib.pyplot as plt
+from scipy.sparse.linalg import svds
 
 def calc_rms(data):
     num = len(data[np.isnan(data)])
@@ -54,6 +55,11 @@ def image_unpad(data_pad, m = 1):
     data = data_pad[h*m:h*(m+1),w*m:w*(m+1)]
     return data
 
+def resize_cplx(data, size_new):
+    out_real = cv2.resize(np.real(data), size_new, interpolation=cv2.INTER_CUBIC)
+    out_imag = cv2.resize(np.imag(data), size_new, interpolation=cv2.INTER_CUBIC)
+    return out_real + 1j * out_imag
+    
 def norm(data):
     return (data-np.min(data)) / (np.max(data)-np.min(data))
 
@@ -110,8 +116,7 @@ def build_wf_cplx_ideal(sampling, NA_obj, wl_um, pix_img_um, mag, zer_list = [0]
     R = NA_obj / wl_um
     M = 1 / 2 / (pix_img_um / mag)  
     confidence = (M/2)/R
-    print(f"wf confidence is {confidence}(greater than 1 is OK)")
-    print(f"phase sampling is {int(sampling * R / M)}")
+    print(f"wf confidence is {confidence}(greater than 1 is OK), phase sampling is {int(sampling * R / M)}")
     if confidence <= 1:
         pix_img_um_should_be = 0.25 / R 
         print(f"pix_img_um is too large, and it shpuld be {pix_img_um_should_be} at least")
@@ -134,24 +139,88 @@ def build_wf_cplx_ideal(sampling, NA_obj, wl_um, pix_img_um, mag, zer_list = [0]
     phase = build_phase_base_on_zernike(zer_list, mesh_rho, mesh_theta) * mask
     wf_cplx = apod * np.exp(1j * 1 * np.pi * phase)
     
-    return wf_cplx, apod, apod, mask_nan
+    return wf_cplx, apod, phase, mask_nan
     
-def imaging(data_in, NA_obj, wl_um, pix_img_um, mag, is_coherence = False):
+def build_source(sampling, NA_obj, wl_um, pix_img_um, mag, sigma_in, sigma_out):
+    R = NA_obj / wl_um
+    M = 1 / 2 / (pix_img_um / mag)      
+    ddx = np.linspace(-M, M, sampling)
+    mesh_x, mesh_y = np.meshgrid(ddx, ddx)
+    mesh_rho = np.sqrt(mesh_x ** 2 + mesh_y ** 2)
+    source = np.zeros_like(mesh_rho)
+    source[mesh_rho <= sigma_out * R] = 1
+    source[mesh_rho < sigma_in * R] = 0    
+    return source
+    
+def imaging(data_in, NA_obj, wl_um, pix_img_um, mag, coef_cohere, zer_list = [0]):
     pad_scale = 1
     msize_pad = data_in.shape[0] * (2*pad_scale +1)
-    wf_cplx, _, _, _ = build_wf_cplx_ideal(msize_pad, NA_obj, wl_um, pix_img_um, mag)
-    if is_coherence:
+    wf_cplx, apod, phase, mask_nan = build_wf_cplx_ideal(msize, NA_obj, wl_um, pix_img_um, mag, zer_list)
+    out = np.zeros_like(data_in)
+    if coef_cohere <= 1e-3:
         # data_in should be amplitude
         amplitude = image_pad(np.sqrt(data_in), pad_scale)
-        out = np.abs(iFFT(FFT(amplitude) * wf_cplx))**2
-        out = image_unpad(out, pad_scale)
-    else:
+        wf_cplx_resize = resize_cplx(wf_cplx, (msize_pad, msize_pad))
+        out_amp = iFFT(FFT(amplitude) * wf_cplx_resize)
+        out_intens = np.real(out_amp * np.conj(out_amp))
+        out = image_unpad(out_intens, pad_scale)
+    elif coef_cohere >= 1 - 1e-3:
         # data_in should be intensity
         intensity = image_pad(data_in, pad_scale)
-        psf = np.abs(iFFT(wf_cplx))**2
+        wf_cplx_resize = resize_cplx(wf_cplx, (msize_pad, msize_pad))
+        psf = np.abs(iFFT(wf_cplx_resize))**2
         psf = psf / np.sum(psf)
-        out = np.abs(iFFT(FFT(intensity) * FFT(psf)))
+        out = np.real(iFFT(FFT(intensity) * FFT(psf)))
         out = image_unpad(out, pad_scale)
+        
+    else:
+        NA_source = NA_obj
+        source = build_source(msize, NA_source, wl_um, pix_img_um, mag, 0, coef_cohere)
+        
+        list_of_source_index = np.argwhere(source*apod == 1)
+        N = len(list_of_source_index)
+        
+        apod_pro = np.zeros((N, msize*msize))
+        for i in range(N):
+            tx = list_of_source_index[i][1] - msize//2
+            ty = list_of_source_index[i][0] - msize//2
+            apod_shift = np.roll(apod, tx, axis=1)
+            apod_shift = np.roll(apod_shift, ty, axis=0)
+            apod_shift_reshape = apod_shift.reshape(1,-1).T
+            apod_pro[i,:] = apod_shift_reshape[:,0]
+        
+        N_select = np.min([100,N-1])
+        # svd_U,svd_sigma,svd_VT = np.linalg.svd(apod_pro)
+        svd_U,svd_sigma,svd_VT = svds(apod_pro, N_select)
+        svd_sigma = svd_sigma[::-1]
+        svd_VT = svd_VT[::-1]
+        
+        tcc_coefs_origin = svd_sigma ** 2
+        N_select_cut = N_select
+        norm_of_tcc_coefs = np.sqrt(np.max(tcc_coefs_origin))
+        tcc_coefs_origin = tcc_coefs_origin / (norm_of_tcc_coefs**2)
+        toler_of_tcc_coefs = 1e-3
+        for i in range(len(svd_sigma) - 1):
+            if tcc_coefs_origin[i-1] > toler_of_tcc_coefs and tcc_coefs_origin[i] < toler_of_tcc_coefs:
+                N_select_cut = i
+                break
+        tcc_coefs = tcc_coefs_origin[:N_select_cut]
+        print(f"TCC is cut: {N} -> {N_select} -> {N_select_cut}")
+        
+        tcc_array = np.zeros((N_select_cut,msize,msize))
+        data_out_partial = np.zeros_like(data_in)
+        for i in range(N_select_cut):
+            tmp = svd_VT[i,:].reshape(msize,msize)
+            tmp[np.less(np.abs(tmp), 1e-8)] = 0
+            tcc_array[i,:,:] = tmp * norm_of_tcc_coefs
+            
+            amplitude = image_pad(np.sqrt(data_in), pad_scale)
+            tcc_pad = resize_cplx(tcc_array[i,:,:], (msize_pad,msize_pad))
+            out_amp = iFFT(FFT(amplitude) * tcc_pad)
+            out_intens = np.real(out_amp * np.conj(out_amp))
+            data_out_partial += (tcc_coefs[i] * image_unpad(out_intens, pad_scale))
+        out = data_out_partial / N
+        
     return out
 
 if __name__ == '__main__':
@@ -159,87 +228,48 @@ if __name__ == '__main__':
     term_nums = 37
     zernike_list = list()
     zernike_list = [0] * term_nums
-    zernike_list[4] = 0.5
-    zernike_list[6] = 0.5
+    zernike_list[4] = 0.0
     
     NA_obj = 0.5
     wl_um = 0.5
     mag = 100
     pix_img_um = 5
-    msize = 200
-    
-    # wf_cplx, apod, phase, mask_nan = build_wf_cplx_ideal(msize, NA_obj, wl_um, pix_img_um, mag)
+    msize = 201
     
     data_in = np.ones((msize,msize), dtype = np.float32)
     data_in = data_in * 0.2
     data_in[:, msize//2:] = 1
     # data_in[msize//2,msize//2] = 1
     
-    data_out_coherence = imaging(data_in, NA_obj, wl_um, pix_img_um, mag, is_coherence = True)
+    data_out_coherence = imaging(data_in, NA_obj, wl_um, pix_img_um, mag, 0, zernike_list)
     
-    data_out_incoherence = imaging(data_in, NA_obj, wl_um, pix_img_um, mag, is_coherence = False)
+    data_out_incoherence = imaging(data_in, NA_obj, wl_um, pix_img_um, mag, 1, zernike_list)
     
-    print(f"{np.sum(data_out_coherence)}, {np.sum(data_out_incoherence)}")
+    coef_cohere = 0.5
     
+    list_of_coef_cohere = [val/10 for val in range(0,11,2)]
+    list_of_data_out_partial = list()
+    for coef_cohere in list_of_coef_cohere:      
+        print(f"coef_cohere = {coef_cohere}")
+        
+        data_out_partial = imaging(data_in, NA_obj, wl_um, pix_img_um, mag, coef_cohere, zernike_list)
+        list_of_data_out_partial.append(data_out_partial)
+        # print(f"{np.max(data_out_coherence)}, {np.max(data_out_incoherence)}, {np.max(data_out_partial)}")
+        
+    fname = f"NA_obj = {NA_obj}, wl_um = {wl_um}, mag = {mag}, pix_img_um = {pix_img_um}"
     x_coord = np.linspace(0, msize, msize)
-    
-    fig_y = 2
-    fig_x = 2
-    
-    plt.figure(1)
-    plt.subplot(fig_y,fig_x,1)
-    plt.title("in")
-    plt.imshow(data_in, cmap="rainbow")
-    plt.colorbar()
-    plt.subplot(fig_y,fig_x,2)
-    plt.title("coherence")
-    plt.imshow(data_out_coherence, cmap="rainbow")
-    plt.colorbar()
-    plt.subplot(fig_y,fig_x,3)
-    plt.title("incoherence")
-    plt.imshow(data_out_incoherence, cmap="rainbow")
-    plt.colorbar()
-    plt.subplot(fig_y,fig_x,4)
-    plt.title("cutline")
+    plt.figure(num=1, figsize=(20,15))
+    plt.title(fname)
     plt.plot(x_coord, data_in[msize//2,:], color="black", label="in", linestyle='-')
-    plt.plot(x_coord, data_out_coherence[msize//2,:], color="blue", label="coherence", linestyle='--')
-    plt.plot(x_coord, data_out_incoherence[msize//2,:], color="red", label="incoherence", linestyle='--')
-    plt.ylim(0.0,1.2)
+    plt.plot(x_coord, data_out_coherence[msize//2,:], label="coherence")
+    plt.plot(x_coord, data_out_incoherence[msize//2,:], label="incoherence")
+    for i in range(len(list_of_coef_cohere)):
+        data_out_partial = list_of_data_out_partial[i]
+        plt.plot(x_coord, data_out_partial[msize//2,:], label=f"partial {list_of_coef_cohere[i]}")
+    # plt.ylim(0.0,1.2)
     plt.grid()
     plt.legend()
-    plt.show()
-    
-    sys.exit(0)
-    
-    
-    wf_cplx, apod, phase, mask_nan = build_wf_cplx_ideal(msize, NA_obj, wl_um, pix_img_um, mag)
-    
-    list_of_apod_index = np.argwhere(apod == 1)
-    N = len(list_of_apod_index)
-    
-    apod_pro = np.zeros((N, msize*msize))
-    for i in range(N):
-        tx = list_of_apod_index[i][1] - msize//2
-        ty = list_of_apod_index[i][0] - msize//2
-        apod_shift = np.roll(apod, tx, axis=1)
-        apod_shift = np.roll(apod_shift, ty, axis=0)
-        apod_shift = apod_shift.reshape(1,-1).T
-        apod_pro[i,:] = apod_shift[:,0]
-    
-    svd_U,svd_sigma,svd_VT = np.linalg.svd(apod_pro)
-
-    tcc_coefs = svd_sigma
-    tcc_array = np.zeros((N,msize,msize))
-    for i in range(N):
-        tmp = svd_VT[i,:].reshape(msize,msize)
-        tmp[np.less(np.abs(tmp), 1e-8)] = 0
-        tcc_array[i,:,:] = tmp
-        
-        plt.figure(1)
-        plt.imshow(tmp, cmap="rainbow")
-        plt.colorbar()
-        plt.savefig("C:\\code\\optics\\tcc\\" + "fig_tcc_" + str(i).zfill(2) + ".png")
-        plt.close()
-    
-    
+    # plt.show()
+    plt.savefig("C:\\code\\optics\\tcc\\" + "fig_cohere.png")
+    plt.close()
     
