@@ -35,17 +35,7 @@ def image_pad(data, m = 1):
     n = 2 * m + 1
     h = data.shape[0]
     w = data.shape[1]
-    data_pad = np.pad(data,((h*m,h*m), (w*m,w*m)),'constant', constant_values=(data[0,0],data[-1,-1]))
-    for i in range(n):
-        for j in range(n):
-            if i == m and j < m:
-                data_pad[h*j:h*(j+1), w*i:w*(i+1)] = data[0,:]
-            if i == m and j > m:
-                data_pad[h*j:h*(j+1), w*i:w*(i+1)] = data[-1,:]
-            if i < m and j == m:
-                data_pad[h*j:h*(j+1), w*i:w*(i+1)] = data[:,0]
-            if i > m and j == m:
-                data_pad[h*j:h*(j+1), w*i:w*(i+1)] = data[:,-1]
+    data_pad = np.pad(data,((h*m,h*m), (w*m,w*m)),'edge')
     return data_pad
 
 def image_unpad(data_pad, m = 1):
