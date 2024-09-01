@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
 
+"""
+@Title: How to image based on coherence, incoherence, partial coherence
+
+@author: sheuchenko
+"""
+
 import numpy as np
 import cv2
 import sys
+import os
 import scipy
 import matplotlib.pyplot as plt
 from scipy.sparse.linalg import svds
@@ -246,6 +253,10 @@ if __name__ == '__main__':
         list_of_data_out_partial.append(data_out_partial)
         # print(f"{np.max(data_out_coherence)}, {np.max(data_out_incoherence)}, {np.max(data_out_partial)}")
         
+    file_dir_out = "C:\\code\\optics\\How_To\\image\\"
+    if not os.path.exists(file_dir_out):
+        os.makedirs(file_dir_out)
+    
     fname = f"NA_obj = {NA_obj}, wl_um = {wl_um}, mag = {mag}, pix_img_um = {pix_img_um}"
     x_coord = np.linspace(0, msize, msize)
     plt.figure(num=1, figsize=(20,15))
@@ -260,6 +271,7 @@ if __name__ == '__main__':
     plt.grid()
     plt.legend()
     # plt.show()
-    plt.savefig("C:\\code\\optics\\tcc\\" + "fig_cohere.png")
+    plt.savefig(file_dir_out + "fig_compare.png")
     plt.close()
     
+    sys.exit(0)
