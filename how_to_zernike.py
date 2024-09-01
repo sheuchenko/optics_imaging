@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Sun Sep  1 10:50:39 2024
 
-@author: suchs
+"""
+@Title: How to build zernike ortho basis, even for the not-full-shape aperture
+
+@author: sheuchenko
 """
 
 import numpy as np
@@ -10,9 +11,7 @@ import math
 import os
 import cv2
 import sys
-import scipy
 import matplotlib.pyplot as plt
-from scipy.sparse.linalg import svds
 
 def inner_product_norm(A, B, M):
     C = np.nansum(A*B*M)
@@ -61,6 +60,10 @@ def re_ortho_FZP(list_of_U_nonan, mask_nan):
     return list_of_V_nan, list_of_V_nonan, matrix_transfer
     
 def save_figure_of_fzp(list_of_fzp, list_of_Nnm_fzp, file_dir_tmp, file_dir_out, fname = "fig"):
+    if not os.path.exists(file_dir_tmp):
+        os.makedirs(file_dir_tmp)
+    if not os.path.exists(file_dir_out):
+        os.makedirs(file_dir_out)
     term_num = len(list_of_Nnm_fzp)
     
     for i in range(term_num):
@@ -159,17 +162,14 @@ if __name__ == '__main__':
         list_of_fzp.append(Rnm * mask_nan)
         list_of_fzp_nonan.append(Rnm)
         
-    file_dir = "C:\\code\\optics\\fzp\\"
+    file_dir = "C:\\code\\optics\\How_To\\zernike\\"
     file_dir_tmp = file_dir + "tmp\\"
     file_dir_out = file_dir
-    
-    if not os.path.exists(file_dir_tmp):
-        os.makedirs(file_dir_tmp)
-    if not os.path.exists(file_dir_out):
-        os.makedirs(file_dir_out)
     
     save_figure_of_fzp(list_of_fzp, list_of_Nnm_fzp, file_dir_tmp, file_dir_out, "fig_A")
     
     list_of_fzp_new, list_of_fzp_new_nonan, matrix_transfer = re_ortho_FZP(list_of_fzp_nonan, mask_new_nan)
     
     save_figure_of_fzp(list_of_fzp_new, list_of_Nnm_fzp, file_dir_tmp, file_dir_out, "fig_D")
+
+    sys.exit(0)
